@@ -22,9 +22,17 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 
 from transformers.activations import ACT2FN
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward, logging
+from transformers.utils import (
+    add_code_sample_docstrings,
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    logging,
+)
 from .configuration_codegen import CodeGenConfig
 
 
@@ -59,7 +67,9 @@ def fixed_pos_embedding(x, seq_dim=1, seq_len=None):
         seq_len = x.shape[seq_dim]
     inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2) / dim))
     sinusoid_inp = (
-        torch.einsum("i , j -> i j", torch.arange(seq_len, dtype=torch.float), inv_freq).to(x.device).float()
+        torch.einsum("i , j -> i j", torch.arange(seq_len, dtype=torch.float), inv_freq)
+        .to(x.device)
+        .float()
     )
     return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
 
@@ -86,7 +96,10 @@ def duplicate_interleave(m):
 
 # Copied from transformers.models.gptj.modeling_gptj.apply_rotary_pos_emb
 def apply_rotary_pos_emb(x, sincos, offset=0):
-    sin, cos = map(lambda t: duplicate_interleave(t)[None, offset : x.shape[1] + offset, None, :], sincos)
+    sin, cos = map(
+        lambda t: duplicate_interleave(t)[None, offset : x.shape[1] + offset, None, :],
+        sincos,
+    )
     # einsum notation for lambda t: repeat(t[offset:x.shape[1]+offset,:], "n d -> () n () (d j)", j=2)
     return (x * cos) + (rotate_every_two(x) * sin)
 
@@ -98,9 +111,9 @@ class CodeGenAttention(nn.Module):
         max_positions = config.max_position_embeddings
         self.register_buffer(
             "causal_mask",
-            torch.tril(torch.ones((max_positions, max_positions), dtype=torch.uint8)).view(
-                1, 1, max_positions, max_positions
-            ),
+            torch.tril(
+                torch.ones((max_positions, max_positions), dtype=torch.uint8)
+            ).view(1, 1, max_positions, max_positions),
         )
 
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
@@ -114,7 +127,9 @@ class CodeGenAttention(nn.Module):
                 f"embed_dim must be divisible by num_attention_heads (got `embed_dim`: {self.embed_dim} and"
                 f" `num_attention_heads`: {self.num_attention_heads})."
             )
-        self.scale_attn = torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32)).to(torch.get_default_dtype())
+        self.scale_attn = torch.sqrt(
+            torch.tensor(self.head_dim, dtype=torch.float32)
+        ).to(torch.get_default_dtype())
         self.qkv_proj = nn.Linear(self.embed_dim, self.embed_dim * 3, bias=False)
 
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
@@ -136,7 +151,9 @@ class CodeGenAttention(nn.Module):
         elif len(tensor.shape) == 4:
             tensor = tensor.permute(0, 2, 1, 3).contiguous()
         else:
-            raise ValueError(f"Input tensor rank should be one of [4, 5], but is: {len(tensor.shape)}")
+            raise ValueError(
+                f"Input tensor rank should be one of [4, 5], but is: {len(tensor.shape)}"
+            )
         new_shape = tensor.size()[:-2] + (num_attention_heads * attn_head_size,)
         return tensor.view(new_shape)
 
@@ -148,10 +165,11 @@ class CodeGenAttention(nn.Module):
         attention_mask=None,
         head_mask=None,
     ):
-
         # compute causal mask from causal mask buffer
         query_length, key_length = query.size(-2), key.size(-2)
-        causal_mask = self.causal_mask[:, :, key_length - query_length : key_length, :key_length]
+        causal_mask = self.causal_mask[
+            :, :, key_length - query_length : key_length, :key_length
+        ]
 
         # Keep the attention weights computation in fp32 to avoid overflow issues
         query = query.to(torch.float32)
@@ -163,7 +181,9 @@ class CodeGenAttention(nn.Module):
         mask_value = torch.finfo(attn_weights.dtype).min
         # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
         # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
+        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(
+            attn_weights.device
+        )
         attn_weights = torch.where(causal_mask, attn_weights, mask_value)
 
         if attention_mask is not None:
@@ -194,7 +214,6 @@ class CodeGenAttention(nn.Module):
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
         Optional[Tuple[torch.Tensor, Tuple[torch.Tensor], Tuple[torch.Tensor, ...]]],
     ]:
-
         qkv = self.qkv_proj(hidden_states)
         # TODO(enijkamp): factor out number of logical TPU-v4 cores or make forward pass agnostic
         # mp_num = 4
@@ -203,10 +222,16 @@ class CodeGenAttention(nn.Module):
 
         local_dim = self.head_dim * self.num_attention_heads // mp_num
         query, value, key = torch.split(qkv_split, local_dim, dim=-1)
-        query = self._split_heads(query, self.num_attention_heads, self.head_dim, mp_num=mp_num)
-        key = self._split_heads(key, self.num_attention_heads, self.head_dim, mp_num=mp_num)
+        query = self._split_heads(
+            query, self.num_attention_heads, self.head_dim, mp_num=mp_num
+        )
+        key = self._split_heads(
+            key, self.num_attention_heads, self.head_dim, mp_num=mp_num
+        )
 
-        value = self._split_heads(value, self.num_attention_heads, self.head_dim, mp_num=mp_num)
+        value = self._split_heads(
+            value, self.num_attention_heads, self.head_dim, mp_num=mp_num
+        )
         value = value.permute(0, 2, 1, 3)
 
         seq_len = key.shape[1]
@@ -249,9 +274,13 @@ class CodeGenAttention(nn.Module):
             present = None
 
         # compute self-attention: V x Softmax(QK^T)
-        attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
+        attn_output, attn_weights = self._attn(
+            query, key, value, attention_mask, head_mask
+        )
 
-        attn_output = self._merge_heads(attn_output, self.num_attention_heads, self.head_dim)
+        attn_output = self._merge_heads(
+            attn_output, self.num_attention_heads, self.head_dim
+        )
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
@@ -264,7 +293,9 @@ class CodeGenAttention(nn.Module):
 
 # Copied from transformers.models.gptj.modeling_gptj.GPTJMLP with GPTJ->CodeGen
 class CodeGenMLP(nn.Module):
-    def __init__(self, intermediate_size, config):  # in MLP: intermediate_size= 4 * embed_dim
+    def __init__(
+        self, intermediate_size, config
+    ):  # in MLP: intermediate_size= 4 * embed_dim
         super().__init__()
         embed_dim = config.n_embd
 
@@ -299,7 +330,10 @@ class CodeGenBlock(nn.Module):
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
-    ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
+    ) -> Union[
+        Tuple[torch.Tensor],
+        Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]],
+    ]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
         attn_outputs = self.attn(
@@ -434,7 +468,9 @@ class CodeGenModel(CodeGenPreTrainedModel):
         self.drop = nn.Dropout(config.embd_pdrop)
         self.h = nn.ModuleList([CodeGenBlock(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_epsilon)
-        self.rotary_dim = min(config.rotary_dim, config.n_ctx // config.num_attention_heads)
+        self.rotary_dim = min(
+            config.rotary_dim, config.n_ctx // config.num_attention_heads
+        )
 
         self.gradient_checkpointing = False
 
@@ -447,7 +483,9 @@ class CodeGenModel(CodeGenPreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         self.wte = new_embeddings
 
-    @add_start_docstrings_to_model_forward(CODEGEN_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
+    @add_start_docstrings_to_model_forward(
+        CODEGEN_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
     @add_code_sample_docstrings(
         processor_class=_TOKENIZER_FOR_DOC,
         checkpoint=_CHECKPOINT_FOR_DOC,
@@ -468,15 +506,25 @@ class CodeGenModel(CodeGenPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
+        )
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
@@ -502,7 +550,12 @@ class CodeGenModel(CodeGenPreTrainedModel):
             past_length = past_key_values[0][0].size(-2)
 
         if position_ids is None:
-            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
+            position_ids = torch.arange(
+                past_length,
+                input_shape[-1] + past_length,
+                dtype=torch.long,
+                device=device,
+            )
             position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1])
 
         # Attention mask.
@@ -548,12 +601,10 @@ class CodeGenModel(CodeGenPreTrainedModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
         for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
-
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-
                 if use_cache:
                     logger.warning(
                         "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
@@ -590,7 +641,9 @@ class CodeGenModel(CodeGenPreTrainedModel):
                 presents = presents + (outputs[1],)
 
             if output_attentions:
-                all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
+                all_self_attentions = all_self_attentions + (
+                    outputs[2 if use_cache else 1],
+                )
 
         hidden_states = self.ln_f(hidden_states)
 
@@ -600,7 +653,16 @@ class CodeGenModel(CodeGenPreTrainedModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v
+                for v in [
+                    hidden_states,
+                    presents,
+                    all_hidden_states,
+                    all_self_attentions,
+                ]
+                if v is not None
+            )
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -617,7 +679,10 @@ class CodeGenModel(CodeGenPreTrainedModel):
     CODEGEN_START_DOCSTRING,
 )
 class CodeGenForCausalLM(CodeGenPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"h\.\d+\.attn\.bias"]
+    _keys_to_ignore_on_load_missing = [
+        r"h\.\d+\.attn\.masked_bias",
+        r"h\.\d+\.attn\.bias",
+    ]
 
     def __init__(self, config):
         super().__init__(config)
@@ -661,7 +726,9 @@ class CodeGenForCausalLM(CodeGenPreTrainedModel):
             "token_type_ids": token_type_ids,
         }
 
-    @add_start_docstrings_to_model_forward(CODEGEN_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
+    @add_start_docstrings_to_model_forward(
+        CODEGEN_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
     @add_code_sample_docstrings(
         processor_class=_TOKENIZER_FOR_DOC,
         checkpoint=_CHECKPOINT_FOR_DOC,
@@ -689,7 +756,9 @@ class CodeGenForCausalLM(CodeGenPreTrainedModel):
             `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
             are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         transformer_outputs = self.transformer(
             input_ids,
@@ -718,7 +787,9 @@ class CodeGenForCausalLM(CodeGenPreTrainedModel):
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss_fct(
+                shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+            )
 
             loss = loss.to(hidden_states.dtype)
 
@@ -735,13 +806,18 @@ class CodeGenForCausalLM(CodeGenPreTrainedModel):
         )
 
     @staticmethod
-    def _reorder_cache(past: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor) -> Tuple[Tuple[torch.Tensor]]:
+    def _reorder_cache(
+        past: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor
+    ) -> Tuple[Tuple[torch.Tensor]]:
         """
         This function is used to re-order the `past_key_values` cache if [`~PretrainedModel.beam_search`] or
         [`~PretrainedModel.beam_sample`] is called. This is required to match `past_key_values` with the correct
         beam_idx at every generation step.
         """
         return tuple(
-            tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
+            tuple(
+                past_state.index_select(0, beam_idx.to(past_state.device))
+                for past_state in layer_past
+            )
             for layer_past in past
         )

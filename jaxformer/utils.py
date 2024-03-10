@@ -7,7 +7,8 @@
 
 import time
 
-class print_time():
+
+class print_time:
     def __init__(self, task):
         self.task = task
 
@@ -16,7 +17,7 @@ class print_time():
         self.t = time.time()
 
     def __exit__(self, type, value, traceback):
-        print(f'{self.task} took {time.time()-self.t:.02f}s')
+        print(f"{self.task} took {time.time()-self.t:.02f}s")
 
 
 ### sh ###
@@ -31,7 +32,7 @@ class ShFail(Exception):
 
 
 def print_redirect(text, new_line=True):
-    print(f'redirect: {text.rstrip()}')
+    print(f"redirect: {text.rstrip()}")
 
 
 def sh(command, new_line=True, check_return_code=True):
@@ -46,7 +47,13 @@ def sh_ret(command):
 
 def run_loop(command, print, new_line=False):
     print(command)
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    process = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
 
     sel = selectors.DefaultSelector()
     sel.register(process.stdout, selectors.EVENT_READ)
@@ -62,7 +69,7 @@ def run_loop(command, print, new_line=False):
 
         return_code = process.poll()
         if return_code is not None:
-            print(f'return={return_code}')
+            print(f"return={return_code}")
             for output in process.stdout.readlines():
                 print(output.strip(), new_line=new_line)
             for output in process.stderr.readlines():
@@ -72,32 +79,38 @@ def run_loop(command, print, new_line=False):
 
 def run_return(command, print):
     print(command)
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, universal_newlines=True)
+    process = subprocess.Popen(
+        command, shell=True, stdout=subprocess.PIPE, universal_newlines=True
+    )
     return process.stdout.readline()
 
 
 def run_return_code_old(command):
-    import subprocess   
+    import subprocess
+
     result = subprocess.Popen(command, shell=True)
     output = result.communicate()[0]
     return result.returncode, output
 
 
 def run_return_code(command):
-    import subprocess   
+    import subprocess
+
     result = subprocess.run(command, shell=True)
     return result.returncode
 
 
 def run(command, print):
     print(command)
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, universal_newlines=True)
-
+    process = subprocess.Popen(
+        command, shell=True, stdout=subprocess.PIPE, universal_newlines=True
+    )
 
 
 ### threading ###
 
 from multiprocessing.pool import ThreadPool
+
 
 def par_map(f, args):
     return ThreadPool(processes=len(args)).map(f, args)
@@ -105,8 +118,9 @@ def par_map(f, args):
 
 import threading
 
+
 class StoppableThread(threading.Thread):
-    def __init__(self, do_run,  *args, **kwargs):
+    def __init__(self, do_run, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.stop_event = threading.Event()
         self.do_run = do_run
@@ -122,23 +136,21 @@ class StoppableThread(threading.Thread):
         return self.stop_event.is_set()
 
 
-
 ### jax ###
 
 import os
 import jax
 
+
 def emulate_tpu_on_cpu(cores=8):
-    os.environ['XLA_FLAGS'] = f'--xla_force_host_platform_device_count={cores}'
-    jax.config.update('jax_platform_name', 'cpu')
+    os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={cores}"
+    jax.config.update("jax_platform_name", "cpu")
     return cores
 
 
-def pjit_noop(fun,
-         in_axis_resources,
-         out_axis_resources,
-         static_argnums = (),
-         donate_argnums = ()):
+def pjit_noop(
+    fun, in_axis_resources, out_axis_resources, static_argnums=(), donate_argnums=()
+):
     return fun
 
 
@@ -152,16 +164,20 @@ import jax
 import jax.numpy as jnp
 import optax
 
-def create_lr_schedule_gpt3_fn(steps_warmup, steps_anneal, lr_max, lr_end):
 
+def create_lr_schedule_gpt3_fn(steps_warmup, steps_anneal, lr_max, lr_end):
     assert steps_warmup <= steps_anneal
 
     def lr_schedule_fn(step):
-
-        bound = lambda x: jnp.clip(x, 0., 1.)
+        bound = lambda x: jnp.clip(x, 0.0, 1.0)
 
         lr_warmup = lambda step: lr_max * bound(step / steps_warmup)
-        lr_anneal = lambda step: lr_max - (lr_max - lr_end) * (1 - jnp.cos(jnp.pi * bound((step - steps_warmup) / steps_anneal))) / 2
+        lr_anneal = (
+            lambda step: lr_max
+            - (lr_max - lr_end)
+            * (1 - jnp.cos(jnp.pi * bound((step - steps_warmup) / steps_anneal)))
+            / 2
+        )
 
         lr = jax.lax.cond(step <= steps_warmup, lr_warmup, lr_anneal, step)
 
@@ -176,15 +192,21 @@ def add_decayed_weights_exclude_ln_and_bias(weight_decay):
 
 
 def to_f32(t):
-    return jax.tree_map(lambda x: x.astype(jnp.float32) if x.dtype == jnp.bfloat16 else x, t)
+    return jax.tree_map(
+        lambda x: x.astype(jnp.float32) if x.dtype == jnp.bfloat16 else x, t
+    )
 
 
 def to_bf16(t):
-    return jax.tree_map(lambda x: x.astype(jnp.bfloat16) if x.dtype == jnp.float32 else x, t)
+    return jax.tree_map(
+        lambda x: x.astype(jnp.bfloat16) if x.dtype == jnp.float32 else x, t
+    )
 
 
 def to_f16(t):
-    return jax.tree_map(lambda x: x.astype(jnp.float16) if x.dtype == jnp.float32 else x, t)
+    return jax.tree_map(
+        lambda x: x.astype(jnp.float16) if x.dtype == jnp.float32 else x, t
+    )
 
 
 def global_norm(updates):

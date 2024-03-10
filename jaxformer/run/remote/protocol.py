@@ -34,23 +34,23 @@ FN_PROFILE_CALL = 14
 FN_PROFILE_RET = 15
 
 
-
 ### sockets ###
 
+
 def socket_write(socket, fn, args):
-    data_fn = int(fn).to_bytes(4, 'little', signed=False)
+    data_fn = int(fn).to_bytes(4, "little", signed=False)
     data_bytes = pickle.dumps(args)
-    data_size = len(data_bytes).to_bytes(8, 'little', signed=False)
+    data_size = len(data_bytes).to_bytes(8, "little", signed=False)
     socket.send(data_fn)
     socket.send(data_size)
     socket.send(data_bytes)
 
 
-def socket_read(s, buf_size=1024*32):
+def socket_read(s, buf_size=1024 * 32):
     data_fn_bytes = s.recv(4)
-    data_fn = int.from_bytes(data_fn_bytes, 'little', signed=False)
+    data_fn = int.from_bytes(data_fn_bytes, "little", signed=False)
     data_args_size_bytes = s.recv(8)
-    data_args_size = int.from_bytes(data_args_size_bytes, 'little', signed=False)
+    data_args_size = int.from_bytes(data_args_size_bytes, "little", signed=False)
     data_args_bytes = s.recv(min(data_args_size, buf_size))
     while len(data_args_bytes) != data_args_size:
         data_args_bytes += s.recv(min(data_args_size, buf_size))

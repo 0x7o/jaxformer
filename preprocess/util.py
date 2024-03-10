@@ -6,11 +6,12 @@
 import time
 from multiprocessing.pool import ThreadPool
 
+
 def par_map(f, args):
     return ThreadPool(processes=len(args)).map(f, args)
 
 
-class print_time():
+class print_time:
     def __init__(self, task):
         self.task = task
 
@@ -19,4 +20,4 @@ class print_time():
         self.t = time.time()
 
     def __exit__(self, type, value, traceback):
-        print(f'{self.task} took {time.time()-self.t:.02f}s', flush=True)
+        print(f"{self.task} took {time.time()-self.t:.02f}s", flush=True)

@@ -88,7 +88,6 @@ def tree_leaves_with_names(pytree, to_id=id):
 
 
 def get_tree_leaves_names_reduced(pytree) -> List[str]:
-
     leaves_ids = tree_leaves_with_names(pytree, to_id=id)
     leaves = jax.tree_leaves(pytree)
     return [leaves_ids[id(l)] for l in leaves]
@@ -109,7 +108,6 @@ projection_layer_2_hf_id_start = {
 
 
 def leave_name_to_hf_layer_id(leaf_name: str):
-
     match = re.search(
         r"\/(.*)\/(?P<module_name>.*)\/~\/(?P<layer_name>.*)\/(?P<wb>.*)",
         leaf_name,
@@ -121,7 +119,7 @@ def leave_name_to_hf_layer_id(leaf_name: str):
     layer_name = match["layer_name"]
     wb = match["wb"]
 
-    print(f'{leaf_name} -> {module_name}/{layer_name}/{wb}')
+    print(f"{leaf_name} -> {module_name}/{layer_name}/{wb}")
 
     if wb in {"w", "scale"}:
         weight_or_bias = "weight"
@@ -132,31 +130,23 @@ def leave_name_to_hf_layer_id(leaf_name: str):
             f"unknown weight/bais type identifier \"{wb}\" at end of: '{leaf_name}'"
         )
 
-
-
     if module_name == "embedding_sharded":
         return f"transformer.wte.{weight_or_bias}"
-
-
 
     elif module_name == "projection":
         return f"{projection_layer_2_hf_id_start[layer_name]}.{weight_or_bias}"
 
-
-
     elif module_name == "attn":
-        hf_inner_module_id = layer_2_hf_inner_module_id[f'{module_name}.{layer_name}']
+        hf_inner_module_id = layer_2_hf_inner_module_id[f"{module_name}.{layer_name}"]
         return "transformer.h.{}" + f".{hf_inner_module_id}.{weight_or_bias}"
 
     elif module_name == "ff":
-        hf_inner_module_id = layer_2_hf_inner_module_id[f'{module_name}.{layer_name}']
+        hf_inner_module_id = layer_2_hf_inner_module_id[f"{module_name}.{layer_name}"]
         return "transformer.h.{}" + f".{hf_inner_module_id}.{weight_or_bias}"
 
     elif module_name == "block":
-        hf_inner_module_id = layer_2_hf_inner_module_id[f'{module_name}.{layer_name}']
+        hf_inner_module_id = layer_2_hf_inner_module_id[f"{module_name}.{layer_name}"]
         return "transformer.h.{}" + f".{hf_inner_module_id}.{weight_or_bias}"
-
-
 
     else:
         raise NotImplementedError(
@@ -203,9 +193,9 @@ def save_pytree_as_hf(
     ), f"{len(old_leave_shapes)=}  {len(leave_names)=}"
 
     # TODO(enijkamp): hack since xmap() on pjit() emulation replicates weights in all shards, load first copy
-    print('loading weights')
-    loaded_shards_in = read_npz(input_ckpt / 'model' / '0.npz')
-    print('loaded weights')
+    print("loading weights")
+    loaded_shards_in = read_npz(input_ckpt / "model" / "0.npz")
+    print("loaded weights")
 
     assert len(leave_names) == len(old_leave_shapes)
     assert len(leave_names) == len(loaded_shards_in)
@@ -214,8 +204,7 @@ def save_pytree_as_hf(
     wte_first = None
 
     for i in range(len(leave_names)):
-
-        print('#' * 20)
+        print("#" * 20)
         print(i, len(leave_names))
 
         x = loaded_shards_in[i]
@@ -232,11 +221,11 @@ def save_pytree_as_hf(
         assert old_shape == x.shape
 
         if hf_layer_id.startswith("transformer.h"):
-            print('unfold layers')
+            print("unfold layers")
 
             assert x.shape[0] == n_layers
 
-            if 'ln_1' in hf_layer_id:
+            if "ln_1" in hf_layer_id:
                 print(hf_layer_id)
                 print(x[0])
 
@@ -248,9 +237,8 @@ def save_pytree_as_hf(
                 x_layer = torch.tensor(x_layer, dtype=torch_dtype).T
 
                 hf_checkpoint[hf_layer_id.format(layer_i)] = x_layer
-        
-        else:
 
+        else:
             # TODO(enijkamp): why?
             # x = torch.tensor(x.squeeze(0), dtype=torch_dtype).T
             x = torch.tensor(x, dtype=torch_dtype).T
@@ -282,7 +270,6 @@ def save_pytree_as_hf(
 
 
 def save_config_to_hf_format(params: dict, torch_dtype: str, output_path: FluidPath):
-
     config = {
         "activation_function": "gelu_new",
         "architectures": ["CodeGenForCausalLM"],
@@ -323,15 +310,19 @@ def save_sharded_to_hf_format(
     config: dict,
     output_path: Union[FluidPath, str],
     np_dtype,
-    torch_dtype
+    torch_dtype,
 ):
-
     devices = np.array([jax.devices()[0]]).reshape((1, 1, 1))
     with maps.Mesh(devices, ("dp", "pt", "mp")):
         config_local = config.copy()
         config_local["tpu_cores"] = maps.thread_resources.env.shape["mp"]
 
-        model = TransformerDecoder(config=config_local, maybe_pjit=pjit_noop, maybe_with_sharding_constraint=with_sharding_constraint_noop, optimizer=None)
+        model = TransformerDecoder(
+            config=config_local,
+            maybe_pjit=pjit_noop,
+            maybe_with_sharding_constraint=with_sharding_constraint_noop,
+            optimizer=None,
+        )
 
         save_pytree_as_hf(
             model.state["model"],
@@ -358,12 +349,12 @@ def setup_jax(cpu=True):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/codegen_1B_mono.json')
-    parser.add_argument('--step', type=int, default=150000)
+    parser.add_argument("--config", type=str, default="config/codegen_1B_mono.json")
+    parser.add_argument("--step", type=int, default=150000)
 
     args = parser.parse_args()
 
-    with open(args.config, 'r') as f:
+    with open(args.config, "r") as f:
         config = json.load(f)
 
     args.input_ckpt = f'{config["ckpt_dir"]}/{args.step}'
@@ -372,24 +363,27 @@ def parse_args():
     return args
 
 
-if __name__ == '__main__':
-
-    with print_time('preamble'):
+if __name__ == "__main__":
+    with print_time("preamble"):
         setup_jax(cpu=True)
 
         args = parse_args()
 
-        print('-' * 40)
-        print(f'step={args.step}')
-        print('-' * 40)
+        print("-" * 40)
+        print(f"step={args.step}")
+        print("-" * 40)
 
-    with print_time('converting paramaters'):
-        input_ckpt, config, output_path, np_dtype, torch_dtype = process_args(**vars(args))
+    with print_time("converting paramaters"):
+        input_ckpt, config, output_path, np_dtype, torch_dtype = process_args(
+            **vars(args)
+        )
         with open(config) as f:
             params = json.load(f)
 
-    with print_time('serializing paramaters'):
-        save_sharded_to_hf_format(input_ckpt, params, output_path, np_dtype, torch_dtype)
+    with print_time("serializing paramaters"):
+        save_sharded_to_hf_format(
+            input_ckpt, params, output_path, np_dtype, torch_dtype
+        )
         save_config_to_hf_format(params, torch_dtype, output_path)
 
-    print('done')
+    print("done")
